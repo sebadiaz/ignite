@@ -415,8 +415,6 @@ public class GridContinuousProcessor extends GridProcessorAdapter {
             }
 
             if (nodeId.equals(ctx.localNodeId()) && ctx.discovery().localNode().isClient()) {
-                assert clientInfos0.isEmpty() : clientInfos0;
-
                 Map<UUID, LocalRoutineInfo> infos = new HashMap<>();
 
                 for (Map.Entry<UUID, LocalRoutineInfo> e : locInfos.entrySet())
