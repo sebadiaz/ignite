@@ -88,6 +88,8 @@ public class GridServiceClientNodeTest extends GridCommonAbstractTest {
 
         stopGrid(0);
 
+        awaitPartitionMapExchange();
+
         checkDeploy(ignite, "service1");
 
         startGrid(3);
@@ -121,6 +123,8 @@ public class GridServiceClientNodeTest extends GridCommonAbstractTest {
         U.sleep(1000);
 
         stopGrid(0);
+
+        awaitPartitionMapExchange();
 
         checkDeploy(ignite, "service1");
 
