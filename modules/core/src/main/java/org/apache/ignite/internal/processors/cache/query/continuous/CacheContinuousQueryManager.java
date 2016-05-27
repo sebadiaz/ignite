@@ -491,6 +491,18 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
             false);
     }
 
+    /**
+     * Registers routine info to be sent in discovery data during this node join
+     * (to be used for internal queries started from client nodes).
+     *
+     * @param ctx Context.
+     * @param cacheName Cache name.
+     * @param locLsnr Local listener.
+     * @param rmtFilter Remote filter.
+     * @param ignoreClsNotFound Ignore class not found error flag.
+     * @return Continuous routine ID.
+     * @throws IgniteCheckedException If failed.
+     */
     public static UUID registerStaticInternalQuery(
         GridKernalContext ctx,
         String cacheName,
@@ -1245,6 +1257,7 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
          */
         public CacheEntryEventImpl(Cache src, EventType evtType, Object key, Object val) {
             super(src, evtType);
+
             this.key = key;
             this.val = val;
         }

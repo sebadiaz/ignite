@@ -73,7 +73,7 @@ public class GridServiceClientNodeTest extends GridCommonAbstractTest {
     /**
      * @throws Exception If failed.
      */
-    public void testDeployAfterServerStop() throws Exception {
+    public void testDeployFromClientAfterRouterStop1() throws Exception {
         startGrid(0);
 
         client = true;
@@ -91,6 +91,40 @@ public class GridServiceClientNodeTest extends GridCommonAbstractTest {
         checkDeploy(ignite, "service1");
 
         startGrid(3);
+
+        for (int i = 0; i < 10; i++)
+            checkDeploy(ignite, "service2-" + i);
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    public void testDeployFromClientAfterRouterStop2() throws Exception {
+        startGrid(0);
+
+        client = true;
+
+        Ignite ignite = startGrid(1);
+
+        client = false;
+
+        startGrid(2);
+
+        client = true;
+
+        startGrid(3);
+
+        client = false;
+
+        startGrid(4);
+
+        U.sleep(1000);
+
+        stopGrid(0);
+
+        checkDeploy(ignite, "service1");
+
+        startGrid(5);
 
         for (int i = 0; i < 10; i++)
             checkDeploy(ignite, "service2-" + i);

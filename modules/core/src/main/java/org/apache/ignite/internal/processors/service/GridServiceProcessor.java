@@ -57,8 +57,6 @@ import org.apache.ignite.internal.processors.GridProcessorAdapter;
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.CacheEntryImpl;
 import org.apache.ignite.internal.processors.cache.CacheIteratorConverter;
-import org.apache.ignite.internal.processors.cache.GridCacheAdapter;
-import org.apache.ignite.internal.processors.cache.GridCacheEntryEx;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.query.CacheQuery;
 import org.apache.ignite.internal.processors.cache.query.GridCacheQueryManager;
@@ -210,17 +208,18 @@ public class GridServiceProcessor extends GridProcessorAdapter {
             if (ctx.deploy().enabled())
                 ctx.cache().context().deploy().ignoreOwnership(true);
 
-            boolean affNode = cache.context().affinityNode();
+            if (!ctx.clientNode()) {
+                assert cache.context().affinityNode();
 
-            // For clients continuous query is statically registered.
-            if (affNode) {
                 cache.context().continuousQueries().executeInternalQuery(new ServiceEntriesListener(),
                     null,
-                    affNode,
                     true,
-                    !affNode);
+                    true,
+                    false);
             }
             else {
+                assert !ctx.isDaemon();
+
                 ctx.closure().runLocalSafe(new Runnable() {
                     @Override public void run() {
                         try {
@@ -234,8 +233,7 @@ public class GridServiceProcessor extends GridProcessorAdapter {
                         }
                     }
                 });
-            }        assert !ctx.isDaemon();
-
+            }
         }
         finally {
             if (ctx.deploy().enabled())
@@ -1322,12 +1320,13 @@ public class GridServiceProcessor extends GridProcessorAdapter {
         }
     }
 
-    private void onSystemCacheUpdated(final Iterable<CacheEntryEvent<?, ?>> deps) {
+    /**
+     * @param evts Update events.
+     */
+    private void onSystemCacheUpdated(final Iterable<CacheEntryEvent<?, ?>> evts) {
         boolean firstTime = true;
 
-        for (CacheEntryEvent<?, ?> e : deps) {
-            log.info("Service listener: " + e);
-
+        for (CacheEntryEvent<?, ?> e : evts) {
             if (e.getKey() instanceof GridServiceDeploymentKey) {
                 if (firstTime) {
                     markCompatibilityStateAsUsed();

@@ -260,8 +260,6 @@ public class MarshallerContextImpl extends MarshallerContextAdapter {
                 assert evt.getOldValue() == null || F.eq(evt.getOldValue(), evt.getValue()):
                     "Received cache entry update for system marshaller cache: " + evt;
 
-                log.info("Marshaller cache: " + evt);
-
                 if (evt.getOldValue() == null) {
                     String fileName = evt.getKey() + ".classname";
 
