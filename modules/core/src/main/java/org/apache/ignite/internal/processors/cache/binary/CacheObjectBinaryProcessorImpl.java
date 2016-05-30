@@ -260,11 +260,11 @@ public class CacheObjectBinaryProcessorImpl extends IgniteCacheObjectProcessorIm
     /** {@inheritDoc} */
     @Override public void onContinuousProcessorStarted(GridKernalContext ctx) throws IgniteCheckedException {
         if (clientNode && !ctx.isDaemon()) {
-            CacheContinuousQueryManager.registerStaticInternalQuery(ctx,
+            ctx.continuous().registerStaticRoutine(
                 CU.UTILITY_CACHE_NAME,
                 new MetaDataEntryListener(),
                 new MetaDataEntryFilter(),
-                false);
+                null);
         }
     }
 

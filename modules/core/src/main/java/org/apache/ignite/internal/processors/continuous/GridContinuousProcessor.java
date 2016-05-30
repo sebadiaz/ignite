@@ -30,12 +30,15 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import javax.cache.event.CacheEntryUpdatedListener;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
+import org.apache.ignite.cache.CacheEntryEventSerializableFilter;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.events.Event;
@@ -82,6 +85,7 @@ import org.jsr166.ConcurrentHashMap8;
 import static org.apache.ignite.events.EventType.EVT_NODE_FAILED;
 import static org.apache.ignite.events.EventType.EVT_NODE_LEFT;
 import static org.apache.ignite.events.EventType.EVT_NODE_SEGMENTED;
+import static org.apache.ignite.internal.GridTopic.TOPIC_CACHE;
 import static org.apache.ignite.internal.GridTopic.TOPIC_CONTINUOUS;
 import static org.apache.ignite.internal.managers.communication.GridIoPolicy.SYSTEM_POOL;
 import static org.apache.ignite.internal.processors.continuous.GridContinuousMessageType.MSG_EVT_ACK;
@@ -135,6 +139,9 @@ public class GridContinuousProcessor extends GridProcessorAdapter {
 
     /** */
     private boolean processorStopped;
+
+    /** Query sequence number for message topic. */
+    private final AtomicLong seq = new AtomicLong();
 
     /**
      * @param ctx Kernal context.
@@ -568,22 +575,35 @@ public class GridContinuousProcessor extends GridProcessorAdapter {
      * Registers routine info to be sent in discovery data during this node join
      * (to be used for internal queries started from client nodes).
      *
-     * @param hnd Handler.
-     * @param bufSize Buffer size.
-     * @param interval Time interval.
-     * @param autoUnsubscribe Automatic unsubscribe flag.
+     * @param cacheName Cache name.
+     * @param locLsnr Local listener.
+     * @param rmtFilter Remote filter.
      * @param prjPred Projection predicate.
      * @return Routine ID.
      * @throws IgniteCheckedException If failed.
      */
-    public UUID registerStaticRoutine(GridContinuousHandler hnd,
-        int bufSize,
-        long interval,
-        boolean autoUnsubscribe,
+    public UUID registerStaticRoutine(
+        String cacheName,
+        CacheEntryUpdatedListener<?, ?> locLsnr,
+        CacheEntryEventSerializableFilter rmtFilter,
         @Nullable IgnitePredicate<ClusterNode> prjPred) throws IgniteCheckedException {
+        String topicPrefix = "CONTINUOUS_QUERY_STATIC" + "_" + cacheName;
+
+        CacheContinuousQueryHandler hnd = new CacheContinuousQueryHandler(
+            cacheName,
+            TOPIC_CACHE.topic(topicPrefix, ctx.localNodeId(), seq.incrementAndGet()),
+            locLsnr,
+            rmtFilter,
+            true,
+            false,
+            true,
+            false);
+
+        hnd.internal(true);
+
         final UUID routineId = UUID.randomUUID();
 
-        LocalRoutineInfo routineInfo = new LocalRoutineInfo(prjPred, hnd, bufSize, interval, autoUnsubscribe);
+        LocalRoutineInfo routineInfo = new LocalRoutineInfo(prjPred, hnd, 1, 0, true);
 
         locInfos.put(routineId, routineInfo);
 

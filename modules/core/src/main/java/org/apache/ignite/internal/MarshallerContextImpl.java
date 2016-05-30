@@ -87,11 +87,11 @@ public class MarshallerContextImpl extends MarshallerContextAdapter {
         if (ctx.clientNode()) {
             lsnr = new ContinuousQueryListener(ctx.log(MarshallerContextImpl.class), workDir);
 
-            CacheContinuousQueryManager.registerStaticInternalQuery(ctx,
+            ctx.continuous().registerStaticRoutine(
                 CU.MARSH_CACHE_NAME,
                 lsnr,
                 null,
-                false);
+                null);
         }
     }
 

@@ -169,11 +169,11 @@ public class GridServiceProcessor extends GridProcessorAdapter {
         if (ctx.clientNode()) {
             assert !ctx.isDaemon();
 
-            CacheContinuousQueryManager.registerStaticInternalQuery(ctx,
+            ctx.continuous().registerStaticRoutine(
                 CU.UTILITY_CACHE_NAME,
                 new ServiceEntriesListener(),
                 null,
-                true);
+                null);
         }
     }
 

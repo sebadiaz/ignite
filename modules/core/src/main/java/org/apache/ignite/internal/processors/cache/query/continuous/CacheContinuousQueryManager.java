@@ -492,45 +492,6 @@ public class CacheContinuousQueryManager extends GridCacheManagerAdapter {
     }
 
     /**
-     * Registers routine info to be sent in discovery data during this node join
-     * (to be used for internal queries started from client nodes).
-     *
-     * @param ctx Context.
-     * @param cacheName Cache name.
-     * @param locLsnr Local listener.
-     * @param rmtFilter Remote filter.
-     * @param ignoreClsNotFound Ignore class not found error flag.
-     * @return Continuous routine ID.
-     * @throws IgniteCheckedException If failed.
-     */
-    public static UUID registerStaticInternalQuery(
-        GridKernalContext ctx,
-        String cacheName,
-        final CacheEntryUpdatedListener<?, ?> locLsnr,
-        final CacheEntryEventSerializableFilter rmtFilter,
-        final boolean ignoreClsNotFound) throws IgniteCheckedException {
-        String topicPrefix = "CONTINUOUS_QUERY_STATIC" + "_" + cacheName;
-
-        CacheContinuousQueryHandler hnd = new CacheContinuousQueryHandler(
-            cacheName,
-            TOPIC_CACHE.topic(topicPrefix, ctx.localNodeId(), 0),
-            locLsnr,
-            rmtFilter,
-            true,
-            false,
-            true,
-            ignoreClsNotFound);
-
-        hnd.internal(true);
-
-        return ctx.continuous().registerStaticRoutine(hnd,
-            ContinuousQuery.DFLT_PAGE_SIZE,
-            ContinuousQuery.DFLT_TIME_INTERVAL,
-            ContinuousQuery.DFLT_AUTO_UNSUBSCRIBE,
-            null);
-    }
-
-    /**
      * @param locLsnr Local listener.
      * @param rmtFilter Remote filter.
      * @param loc Local flag.
