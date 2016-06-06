@@ -98,9 +98,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     /** Ensures that onClose)_ routine is called no more than once. */
     private final AtomicBoolean onCloseGuard = new AtomicBoolean();
 
-    /** Local IGFS metrics. */
-    private final IgfsLocalMetrics metrics;
-
     /** Affinity written by this output stream. */
     private IgfsFileAffinityRange streamRange;
 
@@ -119,10 +116,9 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
      * @param bufSize The size of the buffer to be used.
      * @param mode Grid IGFS mode.
      * @param batch Optional secondary file system batch.
-     * @param metrics Local IGFS metrics.
      */
     IgfsOutputStreamImpl(IgfsContext igfsCtx, IgfsPath path, IgfsEntryInfo fileInfo, int bufSize, IgfsMode mode,
-        @Nullable IgfsFileWorkerBatch batch, IgfsLocalMetrics metrics) {
+        @Nullable IgfsFileWorkerBatch batch) {
         synchronized (mux) {
             this.path = path;
             this.bufSize = optimizeBufferSize(bufSize, fileInfo);
@@ -131,7 +127,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             assert fileInfo.isFile() : "Unexpected file info: " + fileInfo;
             assert mode != null && mode != PROXY;
             assert mode == PRIMARY && batch == null || batch != null;
-            assert metrics != null;
 
             // File hasn't been locked.
             if (fileInfo.lockId() == null)
@@ -144,13 +139,12 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             this.fileInfo = fileInfo;
             this.mode = mode;
             this.batch = batch;
-            this.metrics = metrics;
 
             streamRange = initialStreamRange(fileInfo);
 
             writeCompletionFut = igfsCtx.data().writeStart(fileInfo);
 
-            metrics.incrementFilesOpenedForWrite();
+            igfsCtx.igfs().localMetrics().incrementFilesOpenedForWrite();
         }
     }
 
@@ -259,7 +253,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                     if (closeGuard.compareAndSet(false, true)) {
                         onClose(false);
 
-                        metrics.decrementFilesOpenedForWrite();
+                        igfsCtx.igfs().localMetrics().decrementFilesOpenedForWrite();
 
                         GridEventStorageManager evts = igfsCtx.kernalContext().event();
 
@@ -472,7 +466,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                     err = new IOException("Failed to close stream [path=" + path + ", fileInfo=" + fileInfo + ']', e);
                 }
 
-                metrics.addWrittenBytesTime(bytes, time);
+                igfsCtx.igfs().localMetrics().addWrittenBytesTime(bytes, time);
 
                 // Await secondary file system processing to finish.
                 if (mode == DUAL_SYNC) {
