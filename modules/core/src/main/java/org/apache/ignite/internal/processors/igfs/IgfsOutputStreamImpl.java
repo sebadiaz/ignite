@@ -485,6 +485,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 // Await secondary file system processing to finish.
                 if (mode == DUAL_SYNC) {
                     try {
+                        assert batch != null;
+
                         batch.await();
                     }
                     catch (IgniteCheckedException e) {
@@ -513,8 +515,11 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             }
             else {
                 try {
-                    if (mode == DUAL_SYNC)
+                    if (mode == DUAL_SYNC) {
+                        assert batch != null;
+
                         batch.await();
+                    }
                 }
                 catch (IgniteCheckedException e) {
                     throw new IOException("Failed to close secondary file system stream [path=" + path +
