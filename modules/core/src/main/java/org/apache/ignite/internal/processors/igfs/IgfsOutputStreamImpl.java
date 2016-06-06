@@ -72,12 +72,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     /** IGFS context. */
     private IgfsContext igfsCtx;
 
-    /** Meta info manager. */
-    private final IgfsMetaManager meta;
-
-    /** Data manager. */
-    private final IgfsDataManager data;
-
     /** File descriptor. */
     @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
     private IgfsEntryInfo fileInfo;
@@ -146,8 +140,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             assert !IgfsUtils.DELETE_LOCK_ID.equals(fileInfo.lockId());
 
             this.igfsCtx = igfsCtx;
-            meta = igfsCtx.meta();
-            data = igfsCtx.data();
 
             this.fileInfo = fileInfo;
             this.mode = mode;
@@ -156,7 +148,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
             streamRange = initialStreamRange(fileInfo);
 
-            writeCompletionFut = data.writeStart(fileInfo);
+            writeCompletionFut = igfsCtx.data().writeStart(fileInfo);
 
             metrics.incrementFilesOpenedForWrite();
         }
@@ -295,7 +287,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             boolean exists;
 
             try {
-                exists = meta.exists(fileInfo.id());
+                exists = igfsCtx.meta().exists(fileInfo.id());
             } catch (IgniteCheckedException e) {
                 throw new IOException("File to read file metadata: " + path, e);
             }
@@ -314,7 +306,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
             try {
                 if (remainder != null) {
-                    data.storeDataBlocks(fileInfo, fileInfo.length() + space, null, 0,
+                    igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, null, 0,
                         ByteBuffer.wrap(remainder, 0, remainderDataLen), true, streamRange, batch);
 
                     remainder = null;
@@ -322,9 +314,9 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 }
 
                 if (space > 0) {
-                    data.awaitAllAcksReceived(fileInfo.id());
+                    igfsCtx.data().awaitAllAcksReceived(fileInfo.id());
 
-                    IgfsEntryInfo fileInfo0 = meta.reserveSpace(path, fileInfo.id(), space, streamRange);
+                    IgfsEntryInfo fileInfo0 = igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
 
                     if (fileInfo0 == null)
                         throw new IOException("File was concurrently deleted: " + path);
@@ -376,8 +368,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             remainderDataLen += writeLen;
         }
         else {
-            remainder = data.storeDataBlocks(fileInfo, fileInfo.length() + space, remainder, remainderDataLen, block,
-                false, streamRange, batch);
+            remainder = igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, remainder,
+                remainderDataLen, block, false, streamRange, batch);
 
             remainderDataLen = remainder == null ? 0 : remainder.length;
         }
@@ -417,8 +409,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             remainderDataLen += len;
         }
         else {
-            remainder = data.storeDataBlocks(fileInfo, fileInfo.length() + space, remainder, remainderDataLen, in, len,
-                false, streamRange, batch);
+            remainder = igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, remainder,
+                remainderDataLen, in, len, false, streamRange, batch);
 
             remainderDataLen = remainder == null ? 0 : remainder.length;
         }
@@ -462,7 +454,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             boolean exists;
 
             try {
-                exists = !deleted && meta.exists(fileInfo.id());
+                exists = !deleted && igfsCtx.meta().exists(fileInfo.id());
             }
             catch (IgniteCheckedException e) {
                 throw new IOException("File to read file metadata: " + path, e);
@@ -472,7 +464,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 IOException err = null;
 
                 try {
-                    data.writeClose(fileInfo);
+                    igfsCtx.data().writeClose(fileInfo);
 
                     writeCompletionFut.get();
                 }
@@ -499,10 +491,10 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 long modificationTime = System.currentTimeMillis();
 
                 try {
-                    meta.unlock(fileInfo, modificationTime);
+                    igfsCtx.meta().unlock(fileInfo, modificationTime);
                 }
                 catch (IgfsPathNotFoundException ignore) {
-                    data.delete(fileInfo); // Safety to ensure that all data blocks are deleted.
+                    igfsCtx.data().delete(fileInfo); // Safety to ensure that all data blocks are deleted.
 
                     throw new IOException("File was concurrently deleted: " + path);
                 }
@@ -526,7 +518,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                         ", fileInfo=" + fileInfo + ']', e);
                 }
                 finally {
-                    data.delete(fileInfo);
+                    igfsCtx.data().delete(fileInfo);
                 }
             }
         }
@@ -601,7 +593,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
         IgniteUuid prevAffKey = map == null ? null : map.affinityKey(lastBlockOff, false);
 
-        IgniteUuid affKey = data.nextAffinityKey(prevAffKey);
+        IgniteUuid affKey = igfsCtx.data().nextAffinityKey(prevAffKey);
 
         return affKey == null ? null : new IgfsFileAffinityRange(off, off, affKey);
     }
