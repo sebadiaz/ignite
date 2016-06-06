@@ -119,33 +119,26 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
      */
     IgfsOutputStreamImpl(IgfsContext igfsCtx, IgfsPath path, IgfsEntryInfo fileInfo, int bufSize, IgfsMode mode,
         @Nullable IgfsFileWorkerBatch batch) {
+        assert fileInfo != null && fileInfo.isFile() : "Unexpected file info: " + fileInfo;
+        assert mode != null && mode != PROXY && (mode == PRIMARY && batch == null || batch != null);
+
+        // File hasn't been locked.
+        if (fileInfo.lockId() == null)
+            throw new IgfsException("Failed to acquire file lock (concurrently modified?): " + path);
+
         synchronized (mux) {
             this.path = path;
             this.bufSize = optimizeBufferSize(bufSize, fileInfo);
-
-            assert fileInfo != null;
-            assert fileInfo.isFile() : "Unexpected file info: " + fileInfo;
-            assert mode != null && mode != PROXY;
-            assert mode == PRIMARY && batch == null || batch != null;
-
-            // File hasn't been locked.
-            if (fileInfo.lockId() == null)
-                throw new IgfsException("Failed to acquire file lock (concurrently modified?): " + path);
-
-            assert !IgfsUtils.DELETE_LOCK_ID.equals(fileInfo.lockId());
-
             this.igfsCtx = igfsCtx;
-
             this.fileInfo = fileInfo;
             this.mode = mode;
             this.batch = batch;
 
             streamRange = initialStreamRange(fileInfo);
-
             writeCompletionFut = igfsCtx.data().writeStart(fileInfo);
-
-            igfsCtx.igfs().localMetrics().incrementFilesOpenedForWrite();
         }
+
+        igfsCtx.igfs().localMetrics().incrementFilesOpenedForWrite();
     }
 
     /** {@inheritDoc} */
