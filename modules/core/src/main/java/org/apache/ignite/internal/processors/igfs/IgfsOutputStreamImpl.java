@@ -221,8 +221,9 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 sendData(true);
 
             try {
-                storeDataBlocks(in, len);
-            } catch (IgniteCheckedException e) {
+                storeData(in, len);
+            }
+            catch (IgniteCheckedException e) {
                 throw new IOException(e.getMessage(), e);
             }
 
@@ -323,16 +324,23 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     /**
      * Store data block.
      *
-     * @param block Block.
+     * @param data Block.
+     * @param writeLen Write length.
      * @throws IgniteCheckedException If failed.
      * @throws IOException If failed.
      */
-    private void storeDataBlock(ByteBuffer block) throws IgniteCheckedException, IOException {
+    private void storeData(Object data, int writeLen) throws IgniteCheckedException, IOException {
         assert Thread.holdsLock(mux);
+        assert data instanceof ByteBuffer || data instanceof DataInput;
 
-        int writeLen = block.remaining();
+        if (writeCompletionFut.isDone()) {
+            assert ((GridFutureAdapter)writeCompletionFut).isFailed();
 
-        preStoreDataBlocks(null, writeLen);
+            writeCompletionFut.get();
+        }
+
+        bytes += writeLen;
+        space += writeLen;
 
         int blockSize = fileInfo.blockSize();
 
@@ -350,77 +358,25 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 remainder = allocated;
             }
 
-            block.get(remainder, remainderDataLen, writeLen);
+            if (data instanceof ByteBuffer)
+                ((ByteBuffer)data).get(remainder, remainderDataLen, writeLen);
+            else
+                ((DataInput)data).readFully(remainder, remainderDataLen, writeLen);
 
             remainderDataLen += writeLen;
         }
         else {
-            remainder = igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, remainder,
-                remainderDataLen, block, false, streamRange, batch);
-
-            remainderDataLen = remainder == null ? 0 : remainder.length;
-        }
-    }
-
-    /**
-     * Store data blocks.
-     *
-     * @param in Input.
-     * @param len Length.
-     * @throws IgniteCheckedException If failed.
-     * @throws IOException If failed.
-     */
-    private void storeDataBlocks(DataInput in, int len) throws IgniteCheckedException, IOException {
-        assert Thread.holdsLock(mux);
-
-        preStoreDataBlocks(in, len);
-
-        int blockSize = fileInfo.blockSize();
-
-        // If data length is not enough to fill full block, fill the remainder and return.
-        if (remainderDataLen + len < blockSize) {
-            if (remainder == null)
-                remainder = new byte[blockSize];
-            else if (remainder.length != blockSize) {
-                assert remainderDataLen == remainder.length;
-
-                byte[] allocated = new byte[blockSize];
-
-                U.arrayCopy(remainder, 0, allocated, 0, remainder.length);
-
-                remainder = allocated;
+            if (data instanceof ByteBuffer) {
+                remainder = igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, remainder,
+                    remainderDataLen, (ByteBuffer)data, false, streamRange, batch);
+            }
+            else {
+                remainder = igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, remainder,
+                    remainderDataLen, (DataInput)data, writeLen, false, streamRange, batch);
             }
 
-            in.readFully(remainder, remainderDataLen, len);
-
-            remainderDataLen += len;
-        }
-        else {
-            remainder = igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, remainder,
-                remainderDataLen, in, len, false, streamRange, batch);
-
             remainderDataLen = remainder == null ? 0 : remainder.length;
         }
-    }
-
-    /**
-     * Initializes data loader if it was not initialized yet and updates written space.
-     *
-     * @param len Data length to be written.
-     */
-    private void preStoreDataBlocks(@Nullable DataInput in, int len) throws IgniteCheckedException, IOException {
-        // Check if any exception happened while writing data.
-        if (writeCompletionFut.isDone()) {
-            assert ((GridFutureAdapter)writeCompletionFut).isFailed();
-
-            if (in != null)
-                in.skipBytes(len);
-
-            writeCompletionFut.get();
-        }
-
-        bytes += len;
-        space += len;
     }
 
     /**
@@ -542,7 +498,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             if (flip)
                 buf.flip();
 
-            storeDataBlock(buf);
+            storeData(buf, buf.remaining());
 
             buf = null;
         }
