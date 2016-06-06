@@ -18,12 +18,16 @@
 package org.apache.ignite.internal.processors.igfs;
 
 import org.apache.ignite.IgniteCheckedException;
+import org.apache.ignite.events.IgfsEvent;
 import org.apache.ignite.igfs.IgfsException;
 import org.apache.ignite.igfs.IgfsMode;
+import org.apache.ignite.igfs.IgfsOutputStream;
 import org.apache.ignite.igfs.IgfsPath;
 import org.apache.ignite.igfs.IgfsPathNotFoundException;
 import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
+import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteUuid;
@@ -34,6 +38,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.apache.ignite.events.EventType.EVT_IGFS_FILE_CLOSED_WRITE;
 import static org.apache.ignite.igfs.IgfsMode.DUAL_SYNC;
 import static org.apache.ignite.igfs.IgfsMode.PRIMARY;
 import static org.apache.ignite.igfs.IgfsMode.PROXY;
@@ -41,9 +46,28 @@ import static org.apache.ignite.igfs.IgfsMode.PROXY;
 /**
  * Output stream to store data into grid cache with separate blocks.
  */
-class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
+class IgfsOutputStreamImpl extends IgfsOutputStream {
     /** Maximum number of blocks in buffer. */
     private static final int MAX_BLOCKS_CNT = 16;
+
+    /** Path to file. */
+    protected final IgfsPath path;
+
+    /** Buffer size. */
+    protected final int bufSize;
+
+    /** Flag for this stream open/closed state. */
+    protected boolean closed;
+
+    /** Local buffer to store stream data as consistent block. */
+    protected ByteBuffer buf;
+
+    /** Bytes written. */
+    @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
+    protected long bytes;
+
+    /** Time consumed by write operations. */
+    protected long time;
 
     /** IGFS context. */
     private IgfsContext igfsCtx;
@@ -86,6 +110,9 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
     /** Affinity written by this output stream. */
     private IgfsFileAffinityRange streamRange;
 
+    /** Close guard. */
+    private final AtomicBoolean closeGuard = new AtomicBoolean(false);
+
     /**
      * Constructs file output stream.
      *
@@ -99,7 +126,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
      */
     IgfsOutputStreamImpl(IgfsContext igfsCtx, IgfsPath path, IgfsEntryInfo fileInfo, int bufSize, IgfsMode mode,
         @Nullable IgfsFileWorkerBatch batch, IgfsLocalMetrics metrics) {
-        super(path, optimizeBufferSize(bufSize, fileInfo));
+        this.path = path;
+        this.bufSize = optimizeBufferSize(bufSize, fileInfo);
 
         assert fileInfo != null;
         assert fileInfo.isFile() : "Unexpected file info: " + fileInfo;
@@ -125,46 +153,209 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
         streamRange = initialStreamRange(fileInfo);
 
         writeCompletionFut = data.writeStart(fileInfo);
-    }
 
-    /**
-     * Optimize buffer size.
-     *
-     * @param bufSize Requested buffer size.
-     * @param fileInfo File info.
-     * @return Optimized buffer size.
-     */
-    @SuppressWarnings("IfMayBeConditional")
-    private static int optimizeBufferSize(int bufSize, IgfsEntryInfo fileInfo) {
-        assert bufSize > 0;
-
-        if (fileInfo == null)
-            return bufSize;
-
-        int blockSize = fileInfo.blockSize();
-
-        if (blockSize <= 0)
-            return bufSize;
-
-        if (bufSize <= blockSize)
-            // Optimize minimum buffer size to be equal file's block size.
-            return blockSize;
-
-        int maxBufSize = blockSize * MAX_BLOCKS_CNT;
-
-        if (bufSize > maxBufSize)
-            // There is no profit or optimization from larger buffers.
-            return maxBufSize;
-
-        if (fileInfo.length() == 0)
-            // Make buffer size multiple of block size (optimized for new files).
-            return bufSize / blockSize * blockSize;
-
-        return bufSize;
+        metrics.incrementFilesOpenedForWrite();
     }
 
     /** {@inheritDoc} */
-    @Override protected synchronized void storeDataBlock(ByteBuffer block) throws IgniteCheckedException, IOException {
+    @Override public synchronized void write(int b) throws IOException {
+        checkClosed(null, 0);
+
+        long startTime = System.nanoTime();
+
+        b &= 0xFF;
+
+        if (buf == null)
+            buf = ByteBuffer.allocate(bufSize);
+
+        buf.put((byte)b);
+
+        if (buf.position() >= bufSize)
+            sendData(true); // Send data to server.
+
+        time += System.nanoTime() - startTime;
+    }
+
+    /** {@inheritDoc} */
+    @SuppressWarnings("NullableProblems")
+    @Override public synchronized void write(byte[] b, int off, int len) throws IOException {
+        A.notNull(b, "b");
+
+        if ((off < 0) || (off > b.length) || (len < 0) || ((off + len) > b.length) || ((off + len) < 0)) {
+            throw new IndexOutOfBoundsException("Invalid bounds [data.length=" + b.length + ", offset=" + off +
+                ", length=" + len + ']');
+        }
+
+        checkClosed(null, 0);
+
+        if (len == 0)
+            return; // Done.
+
+        long startTime = System.nanoTime();
+
+        if (buf == null) {
+            // Do not allocate and copy byte buffer if will send data immediately.
+            if (len >= bufSize) {
+                buf = ByteBuffer.wrap(b, off, len);
+
+                sendData(false);
+
+                return;
+            }
+
+            buf = ByteBuffer.allocate(Math.max(bufSize, len));
+        }
+
+        if (buf.remaining() < len)
+            // Expand buffer capacity, if remaining size is less then data size.
+            buf = ByteBuffer.allocate(buf.position() + len).put((ByteBuffer)buf.flip());
+
+        assert len <= buf.remaining() : "Expects write data size less or equal then remaining buffer capacity " +
+            "[len=" + len + ", buf.remaining=" + buf.remaining() + ']';
+
+        buf.put(b, off, len);
+
+        if (buf.position() >= bufSize)
+            sendData(true); // Send data to server.
+
+        time += System.nanoTime() - startTime;
+    }
+
+    /** {@inheritDoc} */
+    @Override public synchronized void transferFrom(DataInput in, int len) throws IOException {
+        checkClosed(in, len);
+
+        long startTime = System.nanoTime();
+
+        // Send all IPC data from the local buffer before streaming.
+        if (buf != null && buf.position() > 0)
+            sendData(true);
+
+        try {
+            storeDataBlocks(in, len);
+        }
+        catch (IgniteCheckedException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+
+        time += System.nanoTime() - startTime;
+    }
+
+    /** {@inheritDoc} */
+    @Override public final synchronized void close() throws IOException {
+        // Do nothing if stream is already closed.
+        if (closed)
+            return;
+
+        try {
+            // Send all IPC data from the local buffer.
+            try {
+                flush();
+            }
+            finally {
+                if (closeGuard.compareAndSet(false, true)) {
+                    onClose(false);
+
+                    metrics.decrementFilesOpenedForWrite();
+
+                    GridEventStorageManager evts = igfsCtx.kernalContext().event();
+
+                    if (evts.isRecordable(EVT_IGFS_FILE_CLOSED_WRITE))
+                        evts.record(new IgfsEvent(path, igfsCtx.kernalContext().discovery().localNode(),
+                            EVT_IGFS_FILE_CLOSED_WRITE, bytes));
+                }
+            }
+        }
+        finally {
+            // Mark this stream closed AFTER flush.
+            closed = true;
+        }
+    }
+
+    /**
+     * Flushes this output stream and forces any buffered output bytes to be written out.
+     *
+     * @exception IOException  if an I/O error occurs.
+     */
+    @Override public synchronized void flush() throws IOException {
+        boolean exists;
+
+        try {
+            exists = meta.exists(fileInfo.id());
+        }
+        catch (IgniteCheckedException e) {
+            throw new IOException("File to read file metadata: " + path, e);
+        }
+
+        if (!exists) {
+            onClose(true);
+
+            throw new IOException("File was concurrently deleted: " + path);
+        }
+
+        checkClosed(null, 0);
+
+        // Send all IPC data from the local buffer.
+        if (buf != null && buf.position() > 0)
+            sendData(true);
+
+        try {
+            if (remainder != null) {
+                data.storeDataBlocks(fileInfo, fileInfo.length() + space, null, 0,
+                    ByteBuffer.wrap(remainder, 0, remainderDataLen), true, streamRange, batch);
+
+                remainder = null;
+                remainderDataLen = 0;
+            }
+
+            if (space > 0) {
+                data.awaitAllAcksReceived(fileInfo.id());
+
+                IgfsEntryInfo fileInfo0 = meta.reserveSpace(path, fileInfo.id(), space, streamRange);
+
+                if (fileInfo0 == null)
+                    throw new IOException("File was concurrently deleted: " + path);
+                else
+                    fileInfo = fileInfo0;
+
+                streamRange = initialStreamRange(fileInfo);
+
+                space = 0;
+            }
+        }
+        catch (IgniteCheckedException e) {
+            throw new IOException("Failed to flush data [path=" + path + ", space=" + space + ']', e);
+        }
+    }
+
+    /**
+     * Initializes data loader if it was not initialized yet and updates written space.
+     *
+     * @param len Data length to be written.
+     */
+    private void preStoreDataBlocks(@Nullable DataInput in, int len) throws IgniteCheckedException, IOException {
+        // Check if any exception happened while writing data.
+        if (writeCompletionFut.isDone()) {
+            assert ((GridFutureAdapter)writeCompletionFut).isFailed();
+
+            if (in != null)
+                in.skipBytes(len);
+
+            writeCompletionFut.get();
+        }
+
+        bytes += len;
+        space += len;
+    }
+
+    /**
+     * Store data block.
+     *
+     * @param block Block.
+     * @throws IgniteCheckedException If failed.
+     * @throws IOException If failed.
+     */
+    protected synchronized void storeDataBlock(ByteBuffer block) throws IgniteCheckedException, IOException {
         int writeLen = block.remaining();
 
         preStoreDataBlocks(null, writeLen);
@@ -197,8 +388,15 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
         }
     }
 
-    /** {@inheritDoc} */
-    @Override protected synchronized void storeDataBlocks(DataInput in, int len) throws IgniteCheckedException, IOException {
+    /**
+     * Store data blocks.
+     *
+     * @param in Input.
+     * @param len Length.
+     * @throws IgniteCheckedException If failed.
+     * @throws IOException If failed.
+     */
+    protected synchronized void storeDataBlocks(DataInput in, int len) throws IgniteCheckedException, IOException {
         preStoreDataBlocks(in, len);
 
         int blockSize = fileInfo.blockSize();
@@ -230,83 +428,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
     }
 
     /**
-     * Initializes data loader if it was not initialized yet and updates written space.
-     *
-     * @param len Data length to be written.
-     */
-    private void preStoreDataBlocks(@Nullable DataInput in, int len) throws IgniteCheckedException, IOException {
-        // Check if any exception happened while writing data.
-        if (writeCompletionFut.isDone()) {
-            assert ((GridFutureAdapter)writeCompletionFut).isFailed();
-
-            if (in != null)
-                in.skipBytes(len);
-
-            writeCompletionFut.get();
-        }
-
-        bytes += len;
-        space += len;
-    }
-
-    /**
-     * Flushes this output stream and forces any buffered output bytes to be written out.
-     *
-     * @exception IOException  if an I/O error occurs.
-     */
-    @Override public synchronized void flush() throws IOException {
-        boolean exists;
-
-        try {
-            exists = meta.exists(fileInfo.id());
-        }
-        catch (IgniteCheckedException e) {
-            throw new IOException("File to read file metadata: " + path, e);
-        }
-
-        if (!exists) {
-            onClose(true);
-
-            throw new IOException("File was concurrently deleted: " + path);
-        }
-
-        super.flush();
-
-        try {
-            if (remainder != null) {
-                data.storeDataBlocks(fileInfo, fileInfo.length() + space, null, 0,
-                    ByteBuffer.wrap(remainder, 0, remainderDataLen), true, streamRange, batch);
-
-                remainder = null;
-                remainderDataLen = 0;
-            }
-
-            if (space > 0) {
-                data.awaitAllAcksReceived(fileInfo.id());
-
-                IgfsEntryInfo fileInfo0 = meta.reserveSpace(path, fileInfo.id(), space, streamRange);
-
-                if (fileInfo0 == null)
-                    throw new IOException("File was concurrently deleted: " + path);
-                else
-                    fileInfo = fileInfo0;
-
-                streamRange = initialStreamRange(fileInfo);
-
-                space = 0;
-            }
-        }
-        catch (IgniteCheckedException e) {
-            throw new IOException("Failed to flush data [path=" + path + ", space=" + space + ']', e);
-        }
-    }
-
-    /** {@inheritDoc} */
-    @Override protected void onClose() throws IOException {
-        onClose(false);
-    }
-
-    /**
      * Close callback. It will be called only once in synchronized section.
      *
      * @param deleted Whether we already know that the file was deleted.
@@ -317,11 +438,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
 
         if (onCloseGuard.compareAndSet(false, true)) {
             // Notify backing secondary file system batch to finish.
-            if (mode != PRIMARY) {
-                assert batch != null;
-
+            if (batch != null)
                 batch.finish();
-            }
 
             // Ensure file existence.
             boolean exists;
@@ -393,6 +511,46 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
     }
 
     /**
+     * Validate this stream is open.
+     *
+     * @throws IOException If this stream is closed.
+     */
+    protected void checkClosed(@Nullable DataInput in, int len) throws IOException {
+        assert Thread.holdsLock(this);
+
+        if (closed) {
+            // Must read data from stream before throwing exception.
+            if (in != null)
+                in.skipBytes(len);
+
+            throw new IOException("Stream has been closed: " + this);
+        }
+    }
+
+    /**
+     * Send all local-buffered data to server.
+     *
+     * @param flip Whether to flip buffer on sending data. We do not want to flip it if sending wrapped
+     *      byte array.
+     * @throws IOException In case of IO exception.
+     */
+    protected void sendData(boolean flip) throws IOException {
+        assert Thread.holdsLock(this);
+
+        try {
+            if (flip)
+                buf.flip();
+
+            storeDataBlock(buf);
+        }
+        catch (IgniteCheckedException e) {
+            throw new IOException("Failed to store data into file: " + path, e);
+        }
+
+        buf = null;
+    }
+
+    /**
      * Gets initial affinity range. This range will have 0 length and will start from first
      * non-occupied file block.
      *
@@ -424,6 +582,41 @@ class IgfsOutputStreamImpl extends IgfsOutputStreamAdapter {
         IgniteUuid affKey = data.nextAffinityKey(prevAffKey);
 
         return affKey == null ? null : new IgfsFileAffinityRange(off, off, affKey);
+    }
+
+    /**
+     * Optimize buffer size.
+     *
+     * @param bufSize Requested buffer size.
+     * @param fileInfo File info.
+     * @return Optimized buffer size.
+     */
+    private static int optimizeBufferSize(int bufSize, IgfsEntryInfo fileInfo) {
+        assert bufSize > 0;
+
+        if (fileInfo == null)
+            return bufSize;
+
+        int blockSize = fileInfo.blockSize();
+
+        if (blockSize <= 0)
+            return bufSize;
+
+        if (bufSize <= blockSize)
+            // Optimize minimum buffer size to be equal file's block size.
+            return blockSize;
+
+        int maxBufSize = blockSize * MAX_BLOCKS_CNT;
+
+        if (bufSize > maxBufSize)
+            // There is no profit or optimization from larger buffers.
+            return maxBufSize;
+
+        if (fileInfo.length() == 0)
+            // Make buffer size multiple of block size (optimized for new files).
+            return bufSize / blockSize * blockSize;
+
+        return bufSize;
     }
 
     /** {@inheritDoc} */
