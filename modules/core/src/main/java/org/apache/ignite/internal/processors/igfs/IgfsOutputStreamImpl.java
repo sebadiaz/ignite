@@ -51,23 +51,23 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     private static final int MAX_BLOCKS_CNT = 16;
 
     /** Path to file. */
-    protected final IgfsPath path;
+    private final IgfsPath path;
 
     /** Buffer size. */
-    protected final int bufSize;
+    private final int bufSize;
 
     /** Flag for this stream open/closed state. */
-    protected boolean closed;
+    private boolean closed;
 
     /** Local buffer to store stream data as consistent block. */
-    protected ByteBuffer buf;
+    private ByteBuffer buf;
 
     /** Bytes written. */
     @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
-    protected long bytes;
+    private long bytes;
 
     /** Time consumed by write operations. */
-    protected long time;
+    private long time;
 
     /** IGFS context. */
     private IgfsContext igfsCtx;
@@ -342,33 +342,13 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     }
 
     /**
-     * Initializes data loader if it was not initialized yet and updates written space.
-     *
-     * @param len Data length to be written.
-     */
-    private void preStoreDataBlocks(@Nullable DataInput in, int len) throws IgniteCheckedException, IOException {
-        // Check if any exception happened while writing data.
-        if (writeCompletionFut.isDone()) {
-            assert ((GridFutureAdapter)writeCompletionFut).isFailed();
-
-            if (in != null)
-                in.skipBytes(len);
-
-            writeCompletionFut.get();
-        }
-
-        bytes += len;
-        space += len;
-    }
-
-    /**
      * Store data block.
      *
      * @param block Block.
      * @throws IgniteCheckedException If failed.
      * @throws IOException If failed.
      */
-    protected void storeDataBlock(ByteBuffer block) throws IgniteCheckedException, IOException {
+    private void storeDataBlock(ByteBuffer block) throws IgniteCheckedException, IOException {
         assert Thread.holdsLock(mux);
 
         int writeLen = block.remaining();
@@ -411,7 +391,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
      * @throws IgniteCheckedException If failed.
      * @throws IOException If failed.
      */
-    protected void storeDataBlocks(DataInput in, int len) throws IgniteCheckedException, IOException {
+    private void storeDataBlocks(DataInput in, int len) throws IgniteCheckedException, IOException {
         assert Thread.holdsLock(mux);
 
         preStoreDataBlocks(in, len);
@@ -442,6 +422,26 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
             remainderDataLen = remainder == null ? 0 : remainder.length;
         }
+    }
+
+    /**
+     * Initializes data loader if it was not initialized yet and updates written space.
+     *
+     * @param len Data length to be written.
+     */
+    private void preStoreDataBlocks(@Nullable DataInput in, int len) throws IgniteCheckedException, IOException {
+        // Check if any exception happened while writing data.
+        if (writeCompletionFut.isDone()) {
+            assert ((GridFutureAdapter)writeCompletionFut).isFailed();
+
+            if (in != null)
+                in.skipBytes(len);
+
+            writeCompletionFut.get();
+        }
+
+        bytes += len;
+        space += len;
     }
 
     /**
@@ -537,7 +537,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
      *
      * @throws IOException If this stream is closed.
      */
-    protected void checkClosed(@Nullable DataInput in, int len) throws IOException {
+    private void checkClosed(@Nullable DataInput in, int len) throws IOException {
         assert Thread.holdsLock(mux);
 
         if (closed) {
@@ -556,7 +556,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
      *      byte array.
      * @throws IOException In case of IO exception.
      */
-    protected void sendData(boolean flip) throws IOException {
+    private void sendData(boolean flip) throws IOException {
         assert Thread.holdsLock(mux);
 
         try {
@@ -564,12 +564,12 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 buf.flip();
 
             storeDataBlock(buf);
+
+            buf = null;
         }
         catch (IgniteCheckedException e) {
             throw new IOException("Failed to store data into file: " + path, e);
         }
-
-        buf = null;
     }
 
     /**
