@@ -50,11 +50,32 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     /** Maximum number of blocks in buffer. */
     private static final int MAX_BLOCKS_CNT = 16;
 
+    /** IGFS context. */
+    private final IgfsContext igfsCtx;
+
     /** Path to file. */
     private final IgfsPath path;
 
     /** Buffer size. */
     private final int bufSize;
+
+    /** IGFS mode. */
+    private final IgfsMode mode;
+
+    /** File worker batch. */
+    private final IgfsFileWorkerBatch batch;
+
+    /** Write completion future. */
+    private final IgniteInternalFuture<Boolean> writeCompletionFut;
+
+    /** Ensures that onClose)_ routine is called no more than once. */
+    private final AtomicBoolean onCloseGuard = new AtomicBoolean();
+
+    /** Close guard. */
+    private final AtomicBoolean closeGuard = new AtomicBoolean(false);
+
+    /** Mutex for synchronization. */
+    private final Object mux = new Object();
 
     /** Flag for this stream open/closed state. */
     private boolean closed;
@@ -68,9 +89,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
     /** Time consumed by write operations. */
     private long time;
-
-    /** IGFS context. */
-    private IgfsContext igfsCtx;
 
     /** File descriptor. */
     @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
@@ -86,26 +104,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     /** Data length in remainder. */
     private int remainderDataLen;
 
-    /** Write completion future. */
-    private final IgniteInternalFuture<Boolean> writeCompletionFut;
-
-    /** IGFS mode. */
-    private final IgfsMode mode;
-
-    /** File worker batch. */
-    private final IgfsFileWorkerBatch batch;
-
-    /** Ensures that onClose)_ routine is called no more than once. */
-    private final AtomicBoolean onCloseGuard = new AtomicBoolean();
-
     /** Affinity written by this output stream. */
     private IgfsFileAffinityRange streamRange;
-
-    /** Close guard. */
-    private final AtomicBoolean closeGuard = new AtomicBoolean(false);
-
-    /** Mutex for synchronization. */
-    private final Object mux = new Object();
 
     /**
      * Constructs file output stream.
