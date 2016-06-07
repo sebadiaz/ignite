@@ -23,7 +23,6 @@ import org.apache.ignite.igfs.IgfsException;
 import org.apache.ignite.igfs.IgfsMode;
 import org.apache.ignite.igfs.IgfsOutputStream;
 import org.apache.ignite.igfs.IgfsPath;
-import org.apache.ignite.igfs.IgfsPathNotFoundException;
 import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -72,18 +71,15 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     private ByteBuffer buf;
 
     /** Bytes written. */
-    @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
     private long bytes;
 
     /** Time consumed by write operations. */
     private long time;
 
     /** File descriptor. */
-    @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
     private IgfsEntryInfo fileInfo;
 
     /** Space in file to write data. */
-    @SuppressWarnings("FieldAccessedSynchronizedAndUnsynchronized")
     private long space;
 
     /** Intermediate remainder to keep data. */
@@ -222,7 +218,11 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
         synchronized (mux) {
             checkClosed(null, 0);
 
-            flush0();
+            sendBufferIfNotEmpty();
+
+            flushRemainder();
+
+            awaitAcks();
 
             // Update file length if needed.
             if (igfsCtx.configuration().isUpdateFileLengthOnFlush() && space > 0) {
@@ -247,15 +247,11 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     }
 
     /**
-     * Internal flush routine.
+     * Await acknowledgments.
      *
      * @throws IOException If failed.
      */
-    private void flush0() throws IOException {
-        sendBufferIfNotEmpty();
-
-        flushRemainder();
-
+    private void awaitAcks() throws IOException {
         try {
             igfsCtx.data().awaitAllAcksReceived(fileInfo.id());
         }
@@ -285,98 +281,83 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     }
 
     /** {@inheritDoc} */
-    @SuppressWarnings("ThrowFromFinallyBlock")
     @Override public final void close() throws IOException {
         synchronized (mux) {
             // Do nothing if stream is already closed.
             if (closed)
                 return;
 
+            // Set closed flag immediately.
+            closed = true;
+
+            // Flush data.
+            IOException err = null;
+
+            boolean flushSuccess = false;
+
             try {
-                // Send all IPC data from the local buffer.
-                try {
-                    flush0();
+                sendBufferIfNotEmpty();
 
-                    try {
-                        if (space > 0)
-                            igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
-                    }
-                    catch (Exception e) {
-                        // TODO.
-                    }
+                flushRemainder();
+
+                igfsCtx.data().writeClose(fileInfo.id(), true);
+
+                flushSuccess = true;
+            }
+            catch (Exception e) {
+                err = new IOException("Failed to flush data during stream close [path=" + path +
+                    ", fileInfo=" + fileInfo + ']', e);
+            }
+
+            // Unlock the file after data is flushed.
+            try {
+                if (flushSuccess) {
+                    if (space > 0)
+                        igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
+
+                    igfsCtx.meta().unlock(fileInfo, System.currentTimeMillis());
                 }
-                finally {
-                    if (batch != null)
-                        batch.finish();
+                else {
+                    igfsCtx.meta().unlock(fileInfo, System.currentTimeMillis());
+                }
+            }
+            catch (Exception e) {
+                if (err == null)
+                    err = new IOException("File to release file lock: " + path, e);
+                else
+                    err.addSuppressed(e);
+            }
 
-                    // Ensure file existence.
-                    IOException err = null;
+            // Finally, await secondary file system flush.
+            if (batch != null) {
+                batch.finish();
 
+                if (mode == DUAL_SYNC) {
                     try {
-                        igfsCtx.data().writeClose(fileInfo.id(), true);
+                        batch.await();
                     }
                     catch (IgniteCheckedException e) {
-                        err = new IOException("Failed to close stream [path=" + path +
-                            ", fileInfo=" + fileInfo + ']', e);
-                    }
-
-                    igfsCtx.igfs().localMetrics().addWrittenBytesTime(bytes, time);
-
-                    // Await secondary file system processing to finish.
-                    if (mode == DUAL_SYNC) {
-                        try {
-                            assert batch != null;
-
-                            batch.await();
-                        }
-                        catch (IgniteCheckedException e) {
-                            if (err == null)
-                                err = new IOException("Failed to close secondary file system stream [path=" + path +
-                                    ", fileInfo=" + fileInfo + ']', e);
-                        }
-                    }
-
-                    long modificationTime = System.currentTimeMillis();
-
-                    try {
-                        igfsCtx.meta().unlock(fileInfo, modificationTime);
-                    }
-                    catch (IgfsPathNotFoundException ignore) {
-                        // Safety to ensure that all data blocks are deleted.
-                        try {
-                            if (mode == DUAL_SYNC)
-                                batch.await();
-                        }
-                        catch (IgniteCheckedException e) {
-                            throw new IOException("Failed to close secondary file system stream [path=" + path +
+                        if (err == null)
+                            err = new IOException("Failed to close secondary file system stream [path=" + path +
                                 ", fileInfo=" + fileInfo + ']', e);
-                        }
-                        finally {
-                            igfsCtx.data().delete(fileInfo);
-                        }
-
-                        throw new IOException("File was concurrently deleted: " + path);
+                        else
+                            err.addSuppressed(e);
                     }
-                    catch (IgniteCheckedException e) {
-                        throw new IOException("File to read file metadata: " + path, e);
-                    }
-
-                    if (err != null)
-                        throw err;
-
-                    igfsCtx.igfs().localMetrics().decrementFilesOpenedForWrite();
-
-                    GridEventStorageManager evts = igfsCtx.kernalContext().event();
-
-                    if (evts.isRecordable(EVT_IGFS_FILE_CLOSED_WRITE))
-                        evts.record(new IgfsEvent(path, igfsCtx.kernalContext().discovery().localNode(),
-                            EVT_IGFS_FILE_CLOSED_WRITE, bytes));
                 }
             }
-            finally {
-                // Mark this stream closed AFTER flush.
-                closed = true;
-            }
+
+            // Throw error, if any.
+            if (err != null)
+                throw err;
+
+            igfsCtx.igfs().localMetrics().addWrittenBytesTime(bytes, time);
+            igfsCtx.igfs().localMetrics().decrementFilesOpenedForWrite();
+
+            GridEventStorageManager evts = igfsCtx.kernalContext().event();
+
+            if (evts.isRecordable(EVT_IGFS_FILE_CLOSED_WRITE))
+                evts.record(new IgfsEvent(path, igfsCtx.kernalContext().discovery().localNode(),
+                    EVT_IGFS_FILE_CLOSED_WRITE, bytes));
         }
     }
 
