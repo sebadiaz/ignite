@@ -224,9 +224,9 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
             sendBufferIfNotEmpty();
 
-            try {
-                flushRemainder();
+            flushRemainder();
 
+            try {
                 if (space > 0) {
                     igfsCtx.data().awaitAllAcksReceived(fileInfo.id());
 
@@ -243,7 +243,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                 }
             }
             catch (IgniteCheckedException e) {
-                throw new IOException("Failed to flush data [path=" + path + ", space=" + space + ']', e);
+                throw new IOException("Failed to update file length data [path=" + path + ", space=" + space + ']', e);
             }
         }
     }
@@ -251,15 +251,20 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     /**
      * Flush remainder.
      *
-     * @throws IgniteCheckedException If failed.
+     * @throws IOException If failed.
      */
-    private void flushRemainder() throws IgniteCheckedException {
-        if (remainder != null) {
-            igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, null, 0,
-                ByteBuffer.wrap(remainder, 0, remainderDataLen), true, streamRange, batch);
+    private void flushRemainder() throws IOException {
+        try {
+            if (remainder != null) {
+                igfsCtx.data().storeDataBlocks(fileInfo, fileInfo.length() + space, null, 0,
+                    ByteBuffer.wrap(remainder, 0, remainderDataLen), true, streamRange, batch);
 
-            remainder = null;
-            remainderDataLen = 0;
+                remainder = null;
+                remainderDataLen = 0;
+            }
+        }
+        catch (IgniteCheckedException e) {
+            throw new IOException("Failed to flush data (remainder) [path=" + path + ", space=" + space + ']', e);
         }
     }
 
