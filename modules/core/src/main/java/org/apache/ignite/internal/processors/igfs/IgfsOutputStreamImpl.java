@@ -24,7 +24,6 @@ import org.apache.ignite.igfs.IgfsMode;
 import org.apache.ignite.igfs.IgfsOutputStream;
 import org.apache.ignite.igfs.IgfsPath;
 import org.apache.ignite.igfs.IgfsPathNotFoundException;
-import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
 import org.apache.ignite.internal.util.typedef.internal.A;
 import org.apache.ignite.internal.util.typedef.internal.S;
@@ -62,9 +61,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
     /** File worker batch. */
     private final IgfsFileWorkerBatch batch;
-
-    /** Write completion future. */
-    private final IgniteInternalFuture<Boolean> writeCompletionFut;
 
     /** Mutex for synchronization. */
     private final Object mux = new Object();
@@ -127,7 +123,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             this.batch = batch;
 
             streamRange = initialStreamRange(fileInfo);
-            writeCompletionFut = igfsCtx.data().writeStart(fileInfo.id());
+
+            igfsCtx.data().writeStart(fileInfo.id());
         }
 
         igfsCtx.igfs().localMetrics().incrementFilesOpenedForWrite();
@@ -287,9 +284,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                     IOException err = null;
 
                     try {
-                        igfsCtx.data().writeClose(fileInfo.id());
-
-                        writeCompletionFut.get();
+                        igfsCtx.data().writeClose(fileInfo.id(), true);
                     }
                     catch (IgniteCheckedException e) {
                         err = new IOException("Failed to close stream [path=" + path +
@@ -418,14 +413,6 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
         assert data instanceof ByteBuffer || data instanceof DataInput;
 
         try {
-            // Check if pending writes are ok.
-            if (writeCompletionFut.isDone()) {
-                if (data instanceof DataInput)
-                    ((DataInput) data).skipBytes(writeLen);
-
-                writeCompletionFut.get();
-            }
-
             // Increment metrics.
             bytes += writeLen;
             space += writeLen;
