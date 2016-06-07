@@ -127,7 +127,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             this.batch = batch;
 
             streamRange = initialStreamRange(fileInfo);
-            writeCompletionFut = igfsCtx.data().writeStart(fileInfo);
+            writeCompletionFut = igfsCtx.data().writeStart(fileInfo.id());
         }
 
         igfsCtx.igfs().localMetrics().incrementFilesOpenedForWrite();
@@ -267,6 +267,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
     }
 
     /** {@inheritDoc} */
+    @SuppressWarnings("ThrowFromFinallyBlock")
     @Override public final void close() throws IOException {
         synchronized (mux) {
             // Do nothing if stream is already closed.
@@ -286,12 +287,13 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                     IOException err = null;
 
                     try {
-                        igfsCtx.data().writeClose(fileInfo);
+                        igfsCtx.data().writeClose(fileInfo.id());
 
                         writeCompletionFut.get();
                     }
                     catch (IgniteCheckedException e) {
-                        err = new IOException("Failed to close stream [path=" + path + ", fileInfo=" + fileInfo + ']', e);
+                        err = new IOException("Failed to close stream [path=" + path +
+                            ", fileInfo=" + fileInfo + ']', e);
                     }
 
                     igfsCtx.igfs().localMetrics().addWrittenBytesTime(bytes, time);
