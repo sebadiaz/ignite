@@ -90,6 +90,13 @@ public abstract class IgniteCacheInvokeReadThroughAbstractTest extends GridCommo
         IgniteCacheAbstractTest.storeMap.clear();
     }
 
+    /** {@inheritDoc} */
+    @Override protected void afterTestsStopped() throws Exception {
+        stopAllGrids();
+
+        super.afterTestsStopped();
+    }
+
     /**
      * @return Store factory.
      */

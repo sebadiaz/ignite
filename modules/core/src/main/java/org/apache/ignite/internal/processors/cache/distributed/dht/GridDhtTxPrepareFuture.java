@@ -334,8 +334,7 @@ public final class GridDhtTxPrepareFuture extends GridCompoundFuture<IgniteInter
                     cached.unswap(retVal);
 
                     boolean readThrough = !txEntry.skipStore() &&
-                        (txEntry.op() == TRANSFORM) ||
-                        ((retVal || hasFilters) && cacheCtx.config().isLoadPreviousValue());
+                        (txEntry.op() == TRANSFORM || ((retVal || hasFilters) && cacheCtx.config().isLoadPreviousValue()));
 
                     boolean evt = retVal || txEntry.op() == TRANSFORM;
 
