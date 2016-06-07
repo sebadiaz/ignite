@@ -207,19 +207,20 @@ public class IgfsMetaManager extends IgfsManager {
         locNode = igfsCtx.kernalContext().discovery().localNode();
 
         // Start background delete worker.
-        delWorker = new IgfsDeleteWorker(igfsCtx);
+        if (!client) {
+            delWorker = new IgfsDeleteWorker(igfsCtx);
 
-        delWorker.start();
+            delWorker.start();
+        }
     }
 
     /** {@inheritDoc} */
     @Override protected void onKernalStop0(boolean cancel) {
         IgfsDeleteWorker delWorker0 = delWorker;
 
-        if (delWorker0 != null)
+        if (delWorker0 != null) {
             delWorker0.cancel();
 
-        if (delWorker0 != null) {
             try {
                 U.join(delWorker0);
             }
@@ -1136,7 +1137,7 @@ public class IgfsMetaManager extends IgfsManager {
 
                     tx.commit();
 
-                    delWorker.signal();
+                    signalDeleteWorker();
 
                     return newInfo.id();
                 }
@@ -1212,7 +1213,7 @@ public class IgfsMetaManager extends IgfsManager {
 
                     tx.commit();
 
-                    delWorker.signal();
+                    signalDeleteWorker();
 
                     return victimId;
                 }
@@ -2144,7 +2145,7 @@ public class IgfsMetaManager extends IgfsManager {
                         throw fsException(new IgfsPathIsDirectoryException("Failed to open file (not a file): " +
                             path));
 
-                    return new IgfsSecondaryInputStreamDescriptor(info, fs.open(path, bufSize));
+                    return new IgfsSecondaryInputStreamDescriptor(info, lazySecondaryReader(fs, path, bufSize));
                 }
 
                 // If failed, try synchronize.
@@ -2160,7 +2161,8 @@ public class IgfsMetaManager extends IgfsManager {
                                 throw fsException(new IgfsPathIsDirectoryException("Failed to open file " +
                                     "(not a file): " + path));
 
-                            return new IgfsSecondaryInputStreamDescriptor(infos.get(path), fs.open(path, bufSize));
+                            return new IgfsSecondaryInputStreamDescriptor(infos.get(path),
+                                lazySecondaryReader(fs, path, bufSize));
                         }
 
                         @Override public IgfsSecondaryInputStreamDescriptor onFailure(@Nullable Exception err)
@@ -2181,6 +2183,19 @@ public class IgfsMetaManager extends IgfsManager {
         }
         else
             throw new IllegalStateException("Failed to open file in DUAL mode because Grid is stopping: " + path);
+    }
+
+    /**
+     * Create lazy secondary file system reader.
+     *
+     * @param fs File system.
+     * @param path Path.
+     * @param bufSize Buffer size.
+     * @return Lazy reader.
+     */
+    private static IgfsLazySecondaryFileSystemPositionedReadable lazySecondaryReader(IgfsSecondaryFileSystem fs,
+        IgfsPath path, int bufSize) {
+        return new IgfsLazySecondaryFileSystemPositionedReadable(fs, path, bufSize);
     }
 
     /**
@@ -2462,7 +2477,7 @@ public class IgfsMetaManager extends IgfsManager {
 
                 Boolean res = synchronizeAndExecute(task, fs, false, Collections.singleton(trashId), path);
 
-                delWorker.signal();
+                signalDeleteWorker();
 
                 return res;
             }
@@ -3326,5 +3341,15 @@ public class IgfsMetaManager extends IgfsManager {
         }
         else
             IgfsUtils.sendEvents(igfsCtx.kernalContext(), leafPath, EventType.EVT_IGFS_DIR_CREATED);
+    }
+
+    /**
+     * Signal delete worker thread.
+     */
+    private void signalDeleteWorker() {
+        IgfsDeleteWorker delWorker0 = delWorker;
+
+        if (delWorker0 != null)
+            delWorker0.signal();
     }
 }
