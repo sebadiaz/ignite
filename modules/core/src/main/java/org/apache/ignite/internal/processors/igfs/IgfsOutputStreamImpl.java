@@ -271,12 +271,12 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
      */
     @Override public void flush() throws IOException {
         synchronized (mux) {
-
             boolean exists;
 
             try {
                 exists = igfsCtx.meta().exists(fileInfo.id());
-            } catch (IgniteCheckedException e) {
+            }
+            catch (IgniteCheckedException e) {
                 throw new IOException("File to read file metadata: " + path, e);
             }
 
@@ -315,7 +315,8 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
                     space = 0;
                 }
-            } catch (IgniteCheckedException e) {
+            }
+            catch (IgniteCheckedException e) {
                 throw new IOException("Failed to flush data [path=" + path + ", space=" + space + ']', e);
             }
         }
