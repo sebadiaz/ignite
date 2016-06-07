@@ -315,10 +315,10 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
                     if (space > 0)
                         igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
 
-                    igfsCtx.meta().unlock(fileInfo, System.currentTimeMillis());
+                    igfsCtx.meta().unlock(fileInfo.id(), fileInfo.lockId(), System.currentTimeMillis());
                 }
                 else {
-                    igfsCtx.meta().unlock(fileInfo, System.currentTimeMillis());
+                    igfsCtx.meta().unlock(fileInfo.id(), fileInfo.lockId(), System.currentTimeMillis());
                 }
             }
             catch (Exception e) {

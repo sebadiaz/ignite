@@ -44,7 +44,6 @@ import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.IgniteInternalFuture;
 import org.apache.ignite.internal.IgniteInterruptedCheckedException;
 import org.apache.ignite.internal.managers.eventstorage.GridEventStorageManager;
-import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.cache.GridCacheInternal;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
@@ -277,24 +276,6 @@ public class IgfsMetaManager extends IgfsManager {
         assert cliCompute0 != null;
 
         return cliCompute0;
-    }
-
-    /**
-     * Return nodes where meta cache is defined.
-     *
-     * @return Nodes where meta cache is defined.
-     */
-    Collection<ClusterNode> metaCacheNodes() {
-        if (busyLock.enterBusy()) {
-            try {
-                return igfsCtx.kernalContext().discovery().cacheNodes(metaCache.name(), AffinityTopologyVersion.NONE);
-            }
-            finally {
-                busyLock.leaveBusy();
-            }
-        }
-        else
-            throw new IllegalStateException("Failed to get meta cache nodes because Grid is stopping.");
     }
 
     /**
@@ -632,19 +613,17 @@ public class IgfsMetaManager extends IgfsManager {
     /**
      * Remove explicit lock on file held by the current thread.
      *
-     * @param info File info to unlock.
+     * @param fileId File ID.
+     * @param lockId Lock ID.
      * @param modificationTime Modification time to write to file info.
      * @throws IgniteCheckedException If failed.
      */
-    public void unlock(final IgfsEntryInfo info, final long modificationTime) throws IgniteCheckedException {
+    public void unlock(final IgniteUuid fileId, final IgniteUuid lockId, final long modificationTime)
+        throws IgniteCheckedException {
         validTxState(false);
-
-        assert info != null;
 
         if (busyLock.enterBusy()) {
             try {
-                final IgniteUuid lockId = info.lockId();
-
                 if (lockId == null)
                     return;
 
@@ -656,8 +635,6 @@ public class IgfsMetaManager extends IgfsManager {
                         @Override public Void applyx() throws IgniteCheckedException {
                             validTxState(true);
 
-                            IgniteUuid fileId = info.id();
-
                             // Lock file ID for this transaction.
                             IgfsEntryInfo oldInfo = info(fileId);
 
@@ -665,9 +642,9 @@ public class IgfsMetaManager extends IgfsManager {
                                 throw fsException(new IgfsPathNotFoundException("Failed to unlock file (file not " +
                                     "found): " + fileId));
 
-                            if (!F.eq(info.lockId(), oldInfo.lockId()))
+                            if (!F.eq(lockId, oldInfo.lockId()))
                                 throw new IgniteCheckedException("Failed to unlock file (inconsistent file lock ID) " +
-                                    "[fileId=" + fileId + ", lockId=" + info.lockId() + ", actualLockId=" +
+                                    "[fileId=" + fileId + ", lockId=" + lockId + ", actualLockId=" +
                                     oldInfo.lockId() + ']');
 
                             id2InfoPrj.invoke(fileId, new IgfsMetaFileUnlockProcessor(modificationTime));
@@ -688,7 +665,7 @@ public class IgfsMetaManager extends IgfsManager {
             }
         }
         else
-            throw new IllegalStateException("Failed to unlock file system entry because Grid is stopping: " + info);
+            throw new IllegalStateException("Failed to unlock file system entry because Grid is stopping: " + fileId);
     }
 
     /**
@@ -1446,38 +1423,6 @@ public class IgfsMetaManager extends IgfsManager {
         else
             throw new IllegalStateException("Failed to perform delete because Grid is stopping [parentId=" +
                 parentId + ", name=" + name + ", id=" + id + ']');
-    }
-
-    /**
-     * Check whether there are any pending deletes and return collection of pending delete entry IDs.
-     *
-     * @return Collection of entry IDs to be deleted.
-     * @throws IgniteCheckedException If operation failed.
-     */
-    public Collection<IgniteUuid> pendingDeletes() throws IgniteCheckedException {
-        if (busyLock.enterBusy()) {
-            try {
-                Collection<IgniteUuid> ids = new HashSet<>();
-
-                for (int i = 0; i < IgfsUtils.TRASH_CONCURRENCY; i++) {
-                    IgniteUuid trashId = IgfsUtils.trashId(i);
-
-                    IgfsEntryInfo trashInfo = getInfo(trashId);
-
-                    if (trashInfo != null && trashInfo.hasChildren()) {
-                        for (IgfsListingEntry entry : trashInfo.listing().values())
-                            ids.add(entry.fileId());
-                    }
-                }
-
-                return ids;
-            }
-            finally {
-                busyLock.leaveBusy();
-            }
-        }
-        else
-            throw new IllegalStateException("Failed to get pending deletes because Grid is stopping.");
     }
 
     /**
