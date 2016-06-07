@@ -39,55 +39,69 @@ public class IgniteCacheInvokeReadThroughTest extends IgniteCacheInvokeReadThrou
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomic0() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 0));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 0, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomic1() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 1));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 1, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomic2() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 2));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 2, false));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    public void testInvokeReadThroughAtomicNearCache() throws Exception {
+        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 1, true));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomicReplicated() throws Exception {
-        invokeReadThrough(cacheConfiguration(REPLICATED, ATOMIC, 0));
+        invokeReadThrough(cacheConfiguration(REPLICATED, ATOMIC, 0, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTx0() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 0));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 0, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTx1() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 1));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 1, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTx2() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 2));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 2, false));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    public void testInvokeReadThroughTxNearCache() throws Exception {
+        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 1, true));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTxReplicated() throws Exception {
-        invokeReadThrough(cacheConfiguration(REPLICATED, TRANSACTIONAL, 0));
+        invokeReadThrough(cacheConfiguration(REPLICATED, TRANSACTIONAL, 0, false));
     }
 }

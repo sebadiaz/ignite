@@ -36,41 +36,55 @@ public class IgniteCacheInvokeReadThroughSingleNodeTest extends IgniteCacheInvok
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomic() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 1));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 1, false));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    public void testInvokeReadThroughAtomicNearCache() throws Exception {
+        invokeReadThrough(cacheConfiguration(PARTITIONED, ATOMIC, 1, true));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomicReplicated() throws Exception {
-        invokeReadThrough(cacheConfiguration(REPLICATED, ATOMIC, 0));
+        invokeReadThrough(cacheConfiguration(REPLICATED, ATOMIC, 0, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughAtomicLocal() throws Exception {
-        invokeReadThrough(cacheConfiguration(LOCAL, ATOMIC, 0));
+        invokeReadThrough(cacheConfiguration(LOCAL, ATOMIC, 0, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTx() throws Exception {
-        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 1));
+        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 1, false));
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    public void testInvokeReadThroughTxNearCache() throws Exception {
+        invokeReadThrough(cacheConfiguration(PARTITIONED, TRANSACTIONAL, 1, true));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTxReplicated() throws Exception {
-        invokeReadThrough(cacheConfiguration(REPLICATED, TRANSACTIONAL, 0));
+        invokeReadThrough(cacheConfiguration(REPLICATED, TRANSACTIONAL, 0, false));
     }
 
     /**
      * @throws Exception If failed.
      */
     public void testInvokeReadThroughTxLocal() throws Exception {
-        invokeReadThrough(cacheConfiguration(LOCAL, TRANSACTIONAL, 0));
+        invokeReadThrough(cacheConfiguration(LOCAL, TRANSACTIONAL, 0, false));
     }
 }

@@ -2881,7 +2881,7 @@ public abstract class IgniteTxLocalAdapter extends IgniteTxAdapter
                 IgniteInternalFuture<Boolean> fut = cacheCtx.cache().txLockAsync(enlisted,
                     timeout,
                     this,
-                    false,
+                    entryProcessor != null, // Needed to force load from store.
                     retval,
                     isolation,
                     isInvalidate(),
@@ -3061,7 +3061,7 @@ public abstract class IgniteTxLocalAdapter extends IgniteTxAdapter
                 IgniteInternalFuture<Boolean> fut = cacheCtx.cache().txLockAsync(enlisted,
                     timeout,
                     this,
-                    false,
+                    invokeMap != null, // Needed to force load from store.
                     retval,
                     isolation,
                     isInvalidate(),
