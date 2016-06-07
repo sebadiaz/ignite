@@ -333,9 +333,9 @@ public final class GridDhtTxPrepareFuture extends GridCompoundFuture<IgniteInter
                 if (hasFilters || retVal || txEntry.op() == DELETE || txEntry.op() == TRANSFORM) {
                     cached.unswap(retVal);
 
-                    boolean readThrough = (retVal || hasFilters) &&
-                        cacheCtx.config().isLoadPreviousValue() &&
-                        !txEntry.skipStore();
+                    boolean readThrough = !txEntry.skipStore() &&
+                        (txEntry.op() == TRANSFORM) ||
+                        ((retVal || hasFilters) && cacheCtx.config().isLoadPreviousValue());
 
                     boolean evt = retVal || txEntry.op() == TRANSFORM;
 
@@ -351,8 +351,6 @@ public final class GridDhtTxPrepareFuture extends GridCompoundFuture<IgniteInter
                         tx,
                         /*swap*/true,
                         readThrough,
-                        /*fail fast*/false,
-                        /*unmarshal*/true,
                         /*metrics*/retVal,
                         /*event*/evt,
                         /*tmp*/false,
@@ -1327,10 +1325,16 @@ public final class GridDhtTxPrepareFuture extends GridCompoundFuture<IgniteInter
                 GridDistributedTxMapping global = globalMap.get(n.id());
 
                 if (!F.isEmpty(entry.entryProcessors())) {
-                    GridDhtPartitionState state = entry.context().topology().partitionState(n.id(),
-                        entry.cached().partition());
+                    boolean sndVal = entry.valueReadFromStore();
 
-                    if (state != GridDhtPartitionState.OWNING && state != GridDhtPartitionState.EVICTED) {
+                    if (!sndVal) {
+                        GridDhtPartitionState state = entry.context().topology().partitionState(n.id(),
+                            entry.cached().partition());
+
+                        sndVal = state != GridDhtPartitionState.OWNING && state != GridDhtPartitionState.EVICTED;
+                    }
+
+                    if (sndVal) {
                         T2<GridCacheOperation, CacheObject> procVal = entry.entryProcessorCalculatedValue();
 
                         assert procVal != null : entry;
