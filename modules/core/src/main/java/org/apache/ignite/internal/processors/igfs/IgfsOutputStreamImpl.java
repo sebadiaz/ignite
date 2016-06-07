@@ -222,14 +222,11 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
         synchronized (mux) {
             checkClosed(null, 0);
 
-            sendBufferIfNotEmpty();
+            flush0();
 
-            flushRemainder();
-
-            try {
-                if (space > 0) {
-                    igfsCtx.data().awaitAllAcksReceived(fileInfo.id());
-
+            // Update file length if needed.
+            if (igfsCtx.configuration().isUpdateFileLengthOnFlush() && space > 0) {
+                try {
                     IgfsEntryInfo fileInfo0 = igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
 
                     if (fileInfo0 == null)
@@ -241,10 +238,29 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
                     space = 0;
                 }
+                catch (IgniteCheckedException e) {
+                    throw new IOException("Failed to update file length data [path=" + path +
+                        ", space=" + space + ']', e);
+                }
             }
-            catch (IgniteCheckedException e) {
-                throw new IOException("Failed to update file length data [path=" + path + ", space=" + space + ']', e);
-            }
+        }
+    }
+
+    /**
+     * Internal flush routine.
+     *
+     * @throws IOException If failed.
+     */
+    private void flush0() throws IOException {
+        sendBufferIfNotEmpty();
+
+        flushRemainder();
+
+        try {
+            igfsCtx.data().awaitAllAcksReceived(fileInfo.id());
+        }
+        catch (IgniteCheckedException e) {
+            throw new IOException("Failed to wait for flush acknowledge: " + fileInfo.id, e);
         }
     }
 
@@ -279,7 +295,15 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             try {
                 // Send all IPC data from the local buffer.
                 try {
-                    flush();
+                    flush0();
+
+                    try {
+                        if (space > 0)
+                            igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
+                    }
+                    catch (Exception e) {
+                        // TODO.
+                    }
                 }
                 finally {
                     if (batch != null)
