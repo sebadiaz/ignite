@@ -227,7 +227,7 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
             // Update file length if needed.
             if (igfsCtx.configuration().isUpdateFileLengthOnFlush() && space > 0) {
                 try {
-                    IgfsEntryInfo fileInfo0 = igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
+                    IgfsEntryInfo fileInfo0 = igfsCtx.meta().reserveSpace(fileInfo.id(), space, streamRange);
 
                     if (fileInfo0 == null)
                         throw new IOException("File was concurrently deleted: " + path);
@@ -311,15 +311,11 @@ class IgfsOutputStreamImpl extends IgfsOutputStream {
 
             // Unlock the file after data is flushed.
             try {
-                if (flushSuccess) {
-                    if (space > 0)
-                        igfsCtx.meta().reserveSpace(path, fileInfo.id(), space, streamRange);
-
+                if (flushSuccess && space > 0)
+                    igfsCtx.meta().unlock(fileInfo.id(), fileInfo.lockId(), System.currentTimeMillis(), true,
+                        space, streamRange);
+                else
                     igfsCtx.meta().unlock(fileInfo.id(), fileInfo.lockId(), System.currentTimeMillis());
-                }
-                else {
-                    igfsCtx.meta().unlock(fileInfo.id(), fileInfo.lockId(), System.currentTimeMillis());
-                }
             }
             catch (Exception e) {
                 if (err == null)

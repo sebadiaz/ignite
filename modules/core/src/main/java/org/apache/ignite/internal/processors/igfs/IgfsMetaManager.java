@@ -611,7 +611,7 @@ public class IgfsMetaManager extends IgfsManager {
     }
 
     /**
-     * Remove explicit lock on file held by the current thread.
+     * Remove explicit lock on file held by the current stream.
      *
      * @param fileId File ID.
      * @param lockId Lock ID.
@@ -619,6 +619,23 @@ public class IgfsMetaManager extends IgfsManager {
      * @throws IgniteCheckedException If failed.
      */
     public void unlock(final IgniteUuid fileId, final IgniteUuid lockId, final long modificationTime)
+        throws IgniteCheckedException {
+        unlock(fileId, lockId, modificationTime, false, 0, null);
+    }
+
+    /**
+     * Remove explicit lock on file held by the current stream.
+     *
+     * @param fileId File ID.
+     * @param lockId Lock ID.
+     * @param modificationTime Modification time to write to file info.
+     * @param updateSpace Whether to update space.
+     * @param space Space.
+     * @param affRange Affinity range.
+     * @throws IgniteCheckedException If failed.
+     */
+    public void unlock(final IgniteUuid fileId, final IgniteUuid lockId, final long modificationTime,
+        final boolean updateSpace, final long space, @Nullable final IgfsFileAffinityRange affRange)
         throws IgniteCheckedException {
         validTxState(false);
 
@@ -647,7 +664,8 @@ public class IgfsMetaManager extends IgfsManager {
                                     "[fileId=" + fileId + ", lockId=" + lockId + ", actualLockId=" +
                                     oldInfo.lockId() + ']');
 
-                            id2InfoPrj.invoke(fileId, new IgfsMetaFileUnlockProcessor(modificationTime));
+                            id2InfoPrj.invoke(fileId,
+                                new IgfsMetaFileUnlockProcessor(modificationTime, updateSpace, space, affRange));
 
                             return null;
                         }
@@ -1490,27 +1508,26 @@ public class IgfsMetaManager extends IgfsManager {
     /**
      * Reserve space for file.
      *
-     * @param path File path.
      * @param fileId File ID.
      * @param space Space.
      * @param affRange Affinity range.
      * @return New file info.
      */
-    public IgfsEntryInfo reserveSpace(IgfsPath path, IgniteUuid fileId, long space, IgfsFileAffinityRange affRange)
+    public IgfsEntryInfo reserveSpace(IgniteUuid fileId, long space, IgfsFileAffinityRange affRange)
         throws IgniteCheckedException {
         validTxState(false);
 
         if (busyLock.enterBusy()) {
             try {
                 if (log.isDebugEnabled())
-                    log.debug("Reserve file space [path=" + path + ", id=" + fileId + ']');
+                    log.debug("Reserve file space: " + fileId);
 
                 try (IgniteInternalTx tx = startTx()) {
                     // Lock file ID for this transaction.
                     IgfsEntryInfo oldInfo = info(fileId);
 
                     if (oldInfo == null)
-                        throw fsException("File has been deleted concurrently [path=" + path + ", id=" + fileId + ']');
+                        throw fsException("File has been deleted concurrently: " + fileId);
 
                     IgfsEntryInfo newInfo =
                         invokeAndGet(fileId, new IgfsMetaFileReserveSpaceProcessor(space, affRange));
@@ -1528,8 +1545,7 @@ public class IgfsMetaManager extends IgfsManager {
             }
         }
         else
-            throw new IllegalStateException("Failed to reserve file space because Grid is stopping [path=" + path +
-                ", id=" + fileId + ']');
+            throw new IllegalStateException("Failed to reserve file space because Grid is stopping:" + fileId);
     }
 
     /**
