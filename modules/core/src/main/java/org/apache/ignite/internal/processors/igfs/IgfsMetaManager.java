@@ -48,6 +48,7 @@ import org.apache.ignite.internal.processors.cache.GridCacheInternal;
 import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
 import org.apache.ignite.internal.processors.igfs.client.IgfsClientAbstractCallable;
+import org.apache.ignite.internal.processors.igfs.client.meta.IgfsClientMetaFileUnlockCallable;
 import org.apache.ignite.internal.processors.igfs.client.meta.IgfsClientMetaIdsForPathCallable;
 import org.apache.ignite.internal.processors.igfs.client.meta.IgfsClientMetaInfoForPathCallable;
 import org.apache.ignite.internal.processors.igfs.meta.IgfsMetaDirectoryCreateProcessor;
@@ -638,6 +639,13 @@ public class IgfsMetaManager extends IgfsManager {
         final boolean updateSpace, final long space, @Nullable final IgfsFileAffinityRange affRange)
         throws IgniteCheckedException {
         validTxState(false);
+
+        if (client) {
+            runClientTask(new IgfsClientMetaFileUnlockCallable(cfg.getName(), fileId, lockId, modificationTime,
+                updateSpace, space, affRange));
+
+            return;
+        }
 
         if (busyLock.enterBusy()) {
             try {
