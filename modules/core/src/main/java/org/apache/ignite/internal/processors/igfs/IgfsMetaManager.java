@@ -1528,7 +1528,7 @@ public class IgfsMetaManager extends IgfsManager {
             }
         }
         else
-            throw new IllegalStateException("Failed to reseve file space because Grid is stopping [path=" + path +
+            throw new IllegalStateException("Failed to reserve file space because Grid is stopping [path=" + path +
                 ", id=" + fileId + ']');
     }
 
